@@ -1,5 +1,3 @@
-# camera/views.py
-
 from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -41,6 +39,31 @@ class GetStreamURLView(APIView):
                 camera = StaticCamera.objects.get(user=request.user)
             else:
                 camera = DDNSCamera.objects.get(user=request.user)
-            return Response({"stream_url": camera.rtsp_url()}, status=status.HTTP_200_OK)
+            if not camera.stream_url:
+                camera.stream_url = camera.rtsp_url()
+                camera.save()
+            return Response({"stream_url": camera.stream_url}, status=status.HTTP_200_OK)
+        except (StaticCamera.DoesNotExist, DDNSCamera.DoesNotExist):
+            return Response({"error": "Camera not found"}, status=status.HTTP_404_NOT_FOUND)
+
+class GenerateStreamURLView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        camera_type = request.data.get('camera_type')
+        if not camera_type:
+            return Response({"error": "camera_type is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            if camera_type == 'static':
+                camera = StaticCamera.objects.get(user=request.user)
+            elif camera_type == 'ddns':
+                camera = DDNSCamera.objects.get(user=request.user)
+            else:
+                return Response({"error": "Invalid camera_type"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            camera.stream_url = camera.rtsp_url()
+            camera.save()
+            return Response({"stream_url": camera.stream_url}, status=status.HTTP_200_OK)
         except (StaticCamera.DoesNotExist, DDNSCamera.DoesNotExist):
             return Response({"error": "Camera not found"}, status=status.HTTP_404_NOT_FOUND)

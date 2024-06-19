@@ -95,8 +95,8 @@ REST_FRAMEWORK = {
 
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': datetime.timedelta(minutes=60),
-    'REFRESH_TOKEN_LIFETIME': datetime.timedelta(days=1),
+   'ACCESS_TOKEN_LIFETIME': datetime.timedelta(days=365),  
+    'REFRESH_TOKEN_LIFETIME': datetime.timedelta(days=365),
 }
 
 ASGI_APPLICATION = 'thirdeye.asgi.application'
@@ -168,3 +168,6 @@ EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_HOST_USER = 'naveenmaga5@gmail.com'
 EMAIL_HOST_PASSWORD = 'uyae aysx qssl nisw'
+
+USE_TZ = True
+TIME_ZONE = 'UTC'
