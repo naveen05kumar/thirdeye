@@ -1,58 +1,102 @@
 from rest_framework import generics, status, views
 from rest_framework.response import Response
-from rest_framework_simplejwt.tokens import RefreshToken
 from .models import User
-from .serializers import RegisterSerializer, EmailVerificationSerializer, LoginSerializer, RequestPasswordResetEmailSerializer, SetNewPasswordWithOTPSerializer, LogoutSerializer
+from .serializers import (
+    RegisterSerializer,
+    EmailVerificationSerializer,
+    LoginSerializer,
+    RequestPasswordResetEmailSerializer,
+    SetNewPasswordWithOTPSerializer
+)
 from .utils import Util, generate_otp
-from django.contrib.sites.shortcuts import get_current_site
-from django.urls import reverse
-import jwt
-from django.conf import settings
-from datetime import datetime
+from datetime import datetime, timedelta
+import random
+import string
+import logging
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
+from django.core.cache import cache
+from django.utils import timezone
+
+
+logger = logging.getLogger(__name__)
 
 class RegisterView(generics.GenericAPIView):
     serializer_class = RegisterSerializer
 
     def post(self, request):
-        user = request.data
-        serializer = self.serializer_class(data=user)
+        user_data = request.data.copy()  # Create a mutable copy of the request data
+        serializer = self.serializer_class(data=user_data)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
-        user_data = serializer.data
 
-        user = User.objects.get(email=user_data['email'])
-        token = RefreshToken.for_user(user).access_token
-        current_site = get_current_site(request).domain
-        relativeLink = reverse('email-verify')
-        absurl = 'http://' + current_site + relativeLink + "?token=" + str(token)
-        email_body = 'Hi ' + user.username + ' Use the link below to verify your email \n' + absurl
-        data = {'email_body': email_body, 'to_email': user.email, 'email_subject': 'Verify your email'}
+        verification_code = ''.join(random.choices(string.digits, k=6))
+        user_data['verification_code'] = verification_code
+        user_data['verification_code_expires_at'] = (timezone.now() + timedelta(minutes=10)).isoformat()
 
-        Util.send_email(data)
-        return Response(user_data, status=status.HTTP_201_CREATED)
+        try:
+            cache.set(verification_code, user_data, timeout=600)  # Cache for 10 minutes
 
+            email_body = f'Hi {user_data["username"]}, use the verification code below to verify your email address:\n{verification_code}'
+            data = {
+                'email_body': email_body,
+                'to_email': user_data['email'],
+                'email_subject': 'Verify Your Email'
+            }
+
+            Util.send_email(data)
+        except Exception as e:
+            logger.error(f"Error in registration process: {e}")
+            return Response({'error': 'An error occurred. Please try again later.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response({'detail': 'Verification code sent to your email'}, status=status.HTTP_201_CREATED)
 class VerifyEmail(views.APIView):
     serializer_class = EmailVerificationSerializer
 
-    token_param_config = openapi.Parameter(
-        'token', in_=openapi.IN_QUERY, description='Description', type=openapi.TYPE_STRING)
+    @swagger_auto_schema(
+        request_body=EmailVerificationSerializer,
+        responses={
+            200: openapi.Response('Email successfully verified', EmailVerificationSerializer),
+            400: 'Invalid or expired verification code',
+            500: 'Internal server error'
+        }
+    )
+    def post(self, request):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-    @swagger_auto_schema(manual_parameters=[token_param_config])
-    def get(self, request):
-        token = request.GET.get('token')
-        try:
-            payload = jwt.decode(token, settings.SECRET_KEY)
-            user = User.objects.get(id=payload['user_id'])
-            if not user.is_verified:
-                user.is_verified = True
-                user.save()
-            return Response({'email': 'Successfully activated'}, status=status.HTTP_200_OK)
-        except jwt.ExpiredSignatureError:
-            return Response({'error': 'Activation Expired'}, status=status.HTTP_400_BAD_REQUEST)
-        except jwt.exceptions.DecodeError:
-            return Response({'error': 'Invalid token'}, status=status.HTTP_400_BAD_REQUEST)
+        code = serializer.validated_data.get('code')
+        user_data = cache.get(code)
+
+        if not user_data:
+            return Response({'error': 'Invalid or expired verification code'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if datetime.fromisoformat(user_data['verification_code_expires_at']) < datetime.now():
+            cache.delete(code)  # Clear the expired cached data
+            return Response({'error': 'Verification code has expired'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Remove sensitive fields before saving
+        user_data.pop('verification_code')
+        user_data.pop('verification_code_expires_at')
+
+        user = User(
+            email=user_data['email'],
+            username=user_data['username']
+        )
+        user.set_password(user_data['password'])
+        user.is_active = True  # Activate user
+        user.is_verified = True  # Mark user as verified
+        user.save()
+        cache.delete(code)  # Clear the cached data
+
+        email_body = f'Hi {user.username}, your email has been successfully verified. You can now log in.'
+        data = {
+            'email_body': email_body,
+            'to_email': user.email,
+            'email_subject': 'Email Verified'
+        }
+        Util.send_email(data)
+
+        return Response({'detail': 'Email successfully verified'}, status=status.HTTP_200_OK)
 
 class LoginAPIView(generics.GenericAPIView):
     serializer_class = LoginSerializer
@@ -72,7 +116,7 @@ class RequestPasswordResetEmail(generics.GenericAPIView):
         user = User.objects.get(email=email)
         otp = generate_otp()
         user.otp = otp
-        user.otp_created_at = datetime.now()
+        user.otp_created_at = timezone.now()
         user.save()
         
         email_body = f'Hello, \n Use the OTP below to reset your password \n{otp}'
@@ -80,7 +124,6 @@ class RequestPasswordResetEmail(generics.GenericAPIView):
         Util.send_email(data)
         
         return Response({'success': 'OTP has been sent to your email'}, status=status.HTTP_200_OK)
-
 
 class SetNewPasswordWithOTP(generics.GenericAPIView):
     serializer_class = SetNewPasswordWithOTPSerializer
@@ -90,13 +133,3 @@ class SetNewPasswordWithOTP(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response({'success': 'Password reset successful'}, status=status.HTTP_200_OK)
-
-class LogoutAPIView(generics.GenericAPIView):
-    serializer_class = LogoutSerializer
-
-    def post(self, request):
-        serializer = self.serializer_class(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-
-        return Response(status=status.HTTP_204_NO_CONTENT)
