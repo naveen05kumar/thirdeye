@@ -35,7 +35,7 @@ class EmailVerificationSerializer(serializers.Serializer):
 
         return attrs
 
-class LoginSerializer(serializers.ModelSerializer):
+class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField(max_length=255, min_length=3)
     password = serializers.CharField(max_length=68, min_length=6, write_only=True)
     username = serializers.CharField(max_length=255, min_length=3, read_only=True)
@@ -67,11 +67,11 @@ class LoginSerializer(serializers.ModelSerializer):
             raise AuthenticationFailed('Email is not verified')
 
         return {
+            'user': user,  # Ensure 'user' is included in the validated data
             'email': user.email,
             'username': user.username,
             'tokens': user.tokens()
         }
-
 class RequestPasswordResetEmailSerializer(serializers.Serializer):
     email = serializers.EmailField(min_length=2)
 
