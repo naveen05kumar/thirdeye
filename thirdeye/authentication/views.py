@@ -1,3 +1,4 @@
+from camera.models import CameraStream
 from rest_framework import generics, status, views
 from rest_framework.response import Response
 from .models import User
@@ -9,7 +10,9 @@ from .serializers import (
     SetNewPasswordWithOTPSerializer
 )
 from .utils import Util, generate_otp
+
 from datetime import datetime, timedelta
+from django.utils import timezone
 import random
 import string
 import logging
@@ -61,17 +64,30 @@ class VerifyEmail(views.APIView):
         }
     )
     def post(self, request):
+        logger.debug('Received request data: %s', request.data)
+        
         serializer = self.serializer_class(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            logger.error('Validation errors: %s', serializer.errors)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         code = serializer.validated_data.get('code')
         user_data = cache.get(code)
 
         if not user_data:
+            logger.error('Invalid or expired verification code: %s', code)
             return Response({'error': 'Invalid or expired verification code'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if datetime.fromisoformat(user_data['verification_code_expires_at']) < datetime.now():
+        # Ensure both datetimes are timezone-aware
+        verification_code_expires_at = datetime.fromisoformat(user_data['verification_code_expires_at'])
+        if verification_code_expires_at.tzinfo is None:
+            verification_code_expires_at = timezone.make_aware(verification_code_expires_at, timezone.utc)
+
+        now = timezone.now()
+
+        if verification_code_expires_at < now:
             cache.delete(code)  # Clear the expired cached data
+            logger.error('Verification code has expired: %s', code)
             return Response({'error': 'Verification code has expired'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Remove sensitive fields before saving
@@ -96,16 +112,30 @@ class VerifyEmail(views.APIView):
         }
         Util.send_email(data)
 
-        return Response({'detail': 'Email successfully verified'}, status=status.HTTP_200_OK)
-
+        return Response({'detail': 'Email successfully verified'}, status=status.HTTP_200_OK)  
 class LoginAPIView(generics.GenericAPIView):
     serializer_class = LoginSerializer
 
     def post(self, request):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
 
+        user = serializer.validated_data['user']
+
+        # Retrieve all stream URLs for the user
+        streams = CameraStream.objects.filter(user=user)
+        stream_urls = [stream.stream_url for stream in streams]
+
+        return Response({
+            'user_info': {
+                'username': user.username,
+                'email': user.email,
+            },
+            'access_token': str(serializer.validated_data['tokens']['access']),
+            'refresh_token': str(serializer.validated_data['tokens']['refresh']),
+            'stream_urls': stream_urls,
+        }, status=status.HTTP_200_OK)
+    
 class RequestPasswordResetEmail(generics.GenericAPIView):
     serializer_class = RequestPasswordResetEmailSerializer
 
