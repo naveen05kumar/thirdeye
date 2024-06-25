@@ -1,10 +1,7 @@
-# authentication/models.py
-
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
-
 
 class UserManager(BaseUserManager):
     def create_user(self, username, email, password=None):
@@ -28,7 +25,6 @@ class UserManager(BaseUserManager):
         user.save()
         return user
 
-
 class User(AbstractBaseUser, PermissionsMixin):
     username = models.CharField(max_length=255, unique=True, db_index=True)
     email = models.EmailField(max_length=255, unique=True, db_index=True)
@@ -39,6 +35,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     updated_at = models.DateTimeField(auto_now=True)
     otp = models.CharField(max_length=6, blank=True, null=True)
     otp_created_at = models.DateTimeField(blank=True, null=True)
+    google_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['username']

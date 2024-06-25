@@ -5,8 +5,22 @@ from .utils import generate_otp, is_otp_valid
 from rest_framework.exceptions import AuthenticationFailed
 from django.core.cache import cache
 
+def validate_password_strength(password):
+    import re
+    if len(password) < 8:
+        raise serializers.ValidationError('Password must be at least 8 characters long.')
+    if not re.search(r'[a-z]', password):
+        raise serializers.ValidationError('Password must contain at least one lowercase letter.')
+    if not re.search(r'[A-Z]', password):
+        raise serializers.ValidationError('Password must contain at least one uppercase letter.')
+    if not re.search(r'[0-9]', password):
+        raise serializers.ValidationError('Password must contain at least one digit.')
+    if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+        raise serializers.ValidationError('Password must contain at least one special character: !@#$%^&*()-+')
+    return password
+
 class RegisterSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(max_length=68, min_length=6, write_only=True)
+    password = serializers.CharField(max_length=68, min_length=8, write_only=True)
 
     class Meta:
         model = User
@@ -15,9 +29,13 @@ class RegisterSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         email = attrs.get('email', '')
         username = attrs.get('username', '')
+        password = attrs.get('password', '')
 
         if not username.isalnum():
             raise serializers.ValidationError('The username should only contain alphanumeric characters')
+
+        validate_password_strength(password)
+
         return attrs
 
 class EmailVerificationSerializer(serializers.Serializer):
@@ -67,11 +85,12 @@ class LoginSerializer(serializers.Serializer):
             raise AuthenticationFailed('Email is not verified')
 
         return {
-            'user': user,  # Ensure 'user' is included in the validated data
+            'user': user,
             'email': user.email,
             'username': user.username,
             'tokens': user.tokens()
         }
+
 class RequestPasswordResetEmailSerializer(serializers.Serializer):
     email = serializers.EmailField(min_length=2)
 
@@ -87,8 +106,8 @@ class RequestPasswordResetEmailSerializer(serializers.Serializer):
 class SetNewPasswordWithOTPSerializer(serializers.Serializer):
     email = serializers.EmailField(min_length=2)
     otp = serializers.CharField(min_length=6, max_length=6)
-    new_password = serializers.CharField(min_length=6, max_length=68, write_only=True)
-    confirm_password = serializers.CharField(min_length=6, max_length=68, write_only=True)
+    new_password = serializers.CharField(min_length=8, max_length=68, write_only=True)
+    confirm_password = serializers.CharField(min_length=8, max_length=68, write_only=True)
 
     class Meta:
         fields = ['email', 'otp', 'new_password', 'confirm_password']
@@ -101,6 +120,8 @@ class SetNewPasswordWithOTPSerializer(serializers.Serializer):
 
         if new_password != confirm_password:
             raise serializers.ValidationError('Passwords do not match')
+
+        validate_password_strength(new_password)
 
         try:
             user = User.objects.get(email=email)

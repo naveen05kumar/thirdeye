@@ -26,7 +26,7 @@ SECRET_KEY = 'django-insecure-#^_vdt36ryy)4-0f8n27p6a9ikvy4^m*=%(y#$-!&lmbbgf6-!
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['10.0.2.2','localhost','127.0.0.1']
 AUTH_USER_MODEL = 'authentication.User'
 
 
@@ -56,6 +56,8 @@ SWAGGER_SETTINGS = {
         }
     }
 }
+
+GOOGLE_CLIENT_ID = '48362687558-s7n6a7d3o5p9ne47p9do0nvbsds64k9a.apps.googleusercontent.com'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
